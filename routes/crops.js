@@ -33,8 +33,8 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS totalCrops,
-              COALESCE(SUM(quantity_available),0) AS totalStock,
-              SUM(CASE WHEN quantity_available < 5 THEN 1 ELSE 0 END) AS lowStockCount
+              COALESCE(SUM(quantity),0) AS totalStock,
+              SUM(CASE WHEN quantity < 5 THEN 1 ELSE 0 END) AS lowStockCount
        FROM crops WHERE farmer_id = ?`,
       [req.params.id]
     );
@@ -60,10 +60,14 @@ router.post('/', verifyToken, async (req, res) => {
     if (req.user.role !== 'farmer') {
       return res.status(403).json({ error: 'Only farmers can add crops' });
     }
-    const { crop_name, price_per_kg, quantity_available, description } = req.body;
+    const cropName = req.body.name || req.body.crop_name;
+    const price = req.body.price || req.body.price_per_kg;
+    const quantity = req.body.quantity || req.body.quantity_available;
+    const description = req.body.description || '';
+
     const [result] = await db.query(
-      'INSERT INTO crops (farmer_id, crop_name, price_per_kg, quantity_available, description) VALUES (?, ?, ?, ?, ?)',
-      [req.user.id, crop_name, price_per_kg, quantity_available, description]
+      'INSERT INTO crops (farmer_id, name, price, quantity, description) VALUES (?, ?, ?, ?, ?)',
+      [req.user.id, cropName, price, quantity, description]
     );
     res.status(201).json({ message: 'Crop added successfully', cropId: result.insertId });
   } catch (err) {
@@ -74,10 +78,14 @@ router.post('/', verifyToken, async (req, res) => {
 
 router.put('/:id', verifyToken, async (req, res) => {
   try {
-    const { crop_name, price_per_kg, quantity_available, description } = req.body;
+    const cropName = req.body.name || req.body.crop_name;
+    const price = req.body.price || req.body.price_per_kg;
+    const quantity = req.body.quantity || req.body.quantity_available;
+    const description = req.body.description || '';
+
     const [result] = await db.query(
-      'UPDATE crops SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ? WHERE id = ? AND farmer_id = ?',
-      [crop_name, price_per_kg, quantity_available, description, req.params.id, req.user.id]
+      'UPDATE crops SET name = ?, price = ?, quantity = ?, description = ? WHERE id = ? AND farmer_id = ?',
+      [cropName, price, quantity, description, req.params.id, req.user.id]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Crop not found or not yours' });

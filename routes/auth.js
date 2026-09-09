@@ -6,6 +6,7 @@ require('dotenv').config();
 
 const router = express.Router();
 
+// --- REGISTRATION ROUTE ---
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password, role, location } = req.body;
@@ -19,20 +20,28 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
+    // Hash the password securely
     const password_hash = await bcrypt.hash(password, 10);
 
-    const [result] = await db.query(
-      'INSERT INTO users (name, email, password_hash, role, location) VALUES (?, ?, ?, ?, ?)',
-      [name, email, password_hash, role, location]
-    );
+    try {
+      // FIX APPLIED HERE: Changed 'password_hash' to 'password' in the SQL column list
+      const [result] = await db.query(
+        'INSERT INTO users (name, email, password, role, location) VALUES (?, ?, ?, ?, ?)',
+        [name, email, password_hash, role, location]
+      );
 
-    res.status(201).json({ message: 'User registered successfully', userId: result.insertId });
+      res.status(201).json({ message: 'User registered successfully', userId: result.insertId });
+    } catch (dbErr) {
+      console.error("Database Insert Error:", dbErr.message);
+      return res.status(500).json({ error: 'Database error: ' + dbErr.message });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+// --- LOGIN ROUTE ---
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -47,7 +56,9 @@ router.post('/login', async (req, res) => {
     }
 
     const user = users[0];
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    
+    // FIX APPLIED HERE: Changed 'user.password_hash' to 'user.password'
+    const passwordMatches = await bcrypt.compare(password, user.password);
 
     if (!passwordMatches) {
       return res.status(401).json({ error: 'Invalid email or password' });

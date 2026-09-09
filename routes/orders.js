@@ -38,7 +38,7 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS totalOrders,
               SUM(CASE WHEN orders.status = 'pending' THEN 1 ELSE 0 END) AS pendingOrders,
-              COALESCE(SUM(CASE WHEN orders.status = 'delivered' THEN orders.quantity_ordered * crops.price_per_kg ELSE 0 END),0) AS revenue
+              COALESCE(SUM(CASE WHEN orders.status = 'delivered' THEN orders.quantity_ordered * crops.price ELSE 0 END),0) AS revenue
        FROM orders JOIN crops ON orders.crop_id = crops.id
        WHERE crops.farmer_id = ?`,
       [req.params.id]
@@ -53,7 +53,7 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
 router.get('/buyer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
-      `SELECT orders.*, crops.crop_name, crops.price_per_kg, crops.farmer_id, users.name AS farmer_name
+      `SELECT orders.*, crops.name, crops.price, crops.farmer_id, users.name AS farmer_name
        FROM orders 
        JOIN crops ON orders.crop_id = crops.id 
        JOIN users ON crops.farmer_id = users.id
@@ -70,7 +70,7 @@ router.get('/buyer/:id', verifyToken, async (req, res) => {
 router.get('/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
-      `SELECT orders.*, crops.crop_name, users.name AS buyer_name, orders.buyer_id
+      `SELECT orders.*, crops.name, users.name AS buyer_name, orders.buyer_id
        FROM orders 
        JOIN crops ON orders.crop_id = crops.id 
        JOIN users ON orders.buyer_id = users.id
