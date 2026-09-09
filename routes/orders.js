@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const router = express.Router();
 
+// Middleware to verify JWT Token
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -17,7 +18,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-// CREATE ORDER (Buyer)
+// 1. CREATE ORDER (Buyer)
 router.post('/', verifyToken, async (req, res) => {
   try {
     if (req.user.role !== 'buyer') {
@@ -31,27 +32,38 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Crop ID is required' });
     }
 
-    // Attempt insert handling both possible column names (quantity_ordered vs quantity)
+    // Fetch farmer_id and price directly from the crops table
+    const [crops] = await db.query('SELECT farmer_id, price FROM crops WHERE id = ?', [crop_id]);
+    if (crops.length === 0) {
+      return res.status(404).json({ error: 'Crop not found' });
+    }
+
+    const farmer_id = crops[0].farmer_id;
+    const price = crops[0].price || 0;
+    const total_price = quantity * price;
+
+    // Insert order with fallback for column naming (quantity_ordered vs quantity)
+    let result;
     try {
-      await db.query(
-        'INSERT INTO orders (buyer_id, crop_id, quantity_ordered, status) VALUES (?, ?, ?, "pending")',
-        [req.user.id, crop_id, quantity]
+      [result] = await db.query(
+        'INSERT INTO orders (buyer_id, crop_id, farmer_id, quantity_ordered, total_price, status) VALUES (?, ?, ?, ?, ?, "pending")',
+        [req.user.id, crop_id, farmer_id, quantity, total_price]
       );
-    } catch (dbErr) {
-      await db.query(
-        'INSERT INTO orders (buyer_id, crop_id, quantity, status) VALUES (?, ?, ?, "pending")',
-        [req.user.id, crop_id, quantity]
+    } catch (err1) {
+      [result] = await db.query(
+        'INSERT INTO orders (buyer_id, crop_id, farmer_id, quantity, total_price, status) VALUES (?, ?, ?, ?, ?, "pending")',
+        [req.user.id, crop_id, farmer_id, quantity, total_price]
       );
     }
 
-    res.status(201).json({ message: 'Order placed successfully!' });
+    res.status(201).json({ message: 'Order placed successfully!', orderId: result.insertId });
   } catch (err) {
     console.error("POST /api/orders Error:", err.message);
-    res.status(500).json({ error: 'Failed to place order' });
+    res.status(500).json({ error: 'Failed to place order: ' + err.message });
   }
 });
 
-// FARMER STATS
+// 2. FARMER STATS
 router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [[row]] = await db.query(
@@ -65,12 +77,12 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
     );
     res.json(row || { totalOrders: 0, pendingOrders: 0, revenue: 0 });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("GET /stats/farmer Error:", err.message);
+    res.status(500).json({ error: 'Server error fetching stats' });
   }
 });
 
-// GET BUYER ORDERS
+// 3. GET BUYER ORDERS
 router.get('/buyer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
@@ -89,12 +101,12 @@ router.get('/buyer/:id', verifyToken, async (req, res) => {
     );
     res.json(orders);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("GET /buyer orders Error:", err.message);
+    res.status(500).json({ error: 'Server error fetching buyer orders' });
   }
 });
 
-// GET FARMER ORDERS
+// 4. GET FARMER ORDERS
 router.get('/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
@@ -112,12 +124,12 @@ router.get('/farmer/:id', verifyToken, async (req, res) => {
     );
     res.json(orders);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("GET /farmer orders Error:", err.message);
+    res.status(500).json({ error: 'Server error fetching farmer orders' });
   }
 });
 
-// UPDATE ORDER STATUS
+// 5. UPDATE ORDER STATUS
 router.put('/:id/status', verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
@@ -143,8 +155,8 @@ router.put('/:id/status', verifyToken, async (req, res) => {
     await db.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
     res.json({ message: 'Order status updated' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error("PUT /orders/status Error:", err.message);
+    res.status(500).json({ error: 'Server error updating order status' });
   }
 });
 
