@@ -25,31 +25,29 @@ router.post('/', verifyToken, async (req, res) => {
     }
 
     const crop_id = req.body.crop_id || req.body.cropId;
-    const quantity_ordered = req.body.quantity_ordered || req.body.quantity || req.body.quantity_kg || 1;
+    const quantity = Number(req.body.quantity_ordered || req.body.quantity || req.body.quantity_kg || 1);
 
     if (!crop_id) {
       return res.status(400).json({ error: 'Crop ID is required' });
     }
 
-    // Insert order with flexible column handling
-    let result;
+    // Attempt insert handling both possible column names (quantity_ordered vs quantity)
     try {
-      [result] = await db.query(
+      await db.query(
         'INSERT INTO orders (buyer_id, crop_id, quantity_ordered, status) VALUES (?, ?, ?, "pending")',
-        [req.user.id, crop_id, quantity_ordered]
+        [req.user.id, crop_id, quantity]
       );
     } catch (dbErr) {
-      // Fallback if table column is named 'quantity' instead of 'quantity_ordered'
-      [result] = await db.query(
+      await db.query(
         'INSERT INTO orders (buyer_id, crop_id, quantity, status) VALUES (?, ?, ?, "pending")',
-        [req.user.id, crop_id, quantity_ordered]
+        [req.user.id, crop_id, quantity]
       );
     }
 
-    res.status(201).json({ message: 'Order placed successfully!', orderId: result.insertId });
+    res.status(201).json({ message: 'Order placed successfully!' });
   } catch (err) {
-    console.error("POST /api/orders Error:", err);
-    res.status(500).json({ error: 'Server error while placing order' });
+    console.error("POST /api/orders Error:", err.message);
+    res.status(500).json({ error: 'Failed to place order' });
   }
 });
 
@@ -67,8 +65,8 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
     );
     res.json(row || { totalOrders: 0, pendingOrders: 0, revenue: 0 });
   } catch (err) {
-    console.error("GET /stats/farmer Error:", err);
-    res.status(500).json({ error: 'Server error fetching stats' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -91,8 +89,8 @@ router.get('/buyer/:id', verifyToken, async (req, res) => {
     );
     res.json(orders);
   } catch (err) {
-    console.error("GET /buyer orders Error:", err);
-    res.status(500).json({ error: 'Server error fetching buyer orders' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -114,8 +112,8 @@ router.get('/farmer/:id', verifyToken, async (req, res) => {
     );
     res.json(orders);
   } catch (err) {
-    console.error("GET /farmer orders Error:", err);
-    res.status(500).json({ error: 'Server error fetching farmer orders' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -145,8 +143,8 @@ router.put('/:id/status', verifyToken, async (req, res) => {
     await db.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
     res.json({ message: 'Order status updated' });
   } catch (err) {
-    console.error("PUT /orders/status Error:", err);
-    res.status(500).json({ error: 'Server error updating order status' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
