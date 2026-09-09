@@ -24,10 +24,10 @@ router.post('/register', async (req, res) => {
     const password_hash = await bcrypt.hash(password, 10);
 
     try {
-      // FIX APPLIED HERE: Changed 'password_hash' to 'password' in the SQL column list
+      // Corrected: Uses password_hash column in MySQL
       const [result] = await db.query(
-        'INSERT INTO users (name, email, password, role, location) VALUES (?, ?, ?, ?, ?)',
-        [name, email, password_hash, role, location]
+        'INSERT INTO users (name, email, password_hash, role, location) VALUES (?, ?, ?, ?, ?)',
+        [name, email, password_hash, role, location || '']
       );
 
       res.status(201).json({ message: 'User registered successfully', userId: result.insertId });
@@ -56,17 +56,22 @@ router.post('/login', async (req, res) => {
     }
 
     const user = users[0];
-    
-    // FIX APPLIED HERE: Changed 'user.password_hash' to 'user.password'
-    const passwordMatches = await bcrypt.compare(password, user.password);
+
+    // Safety check: Handles password_hash column safely without passing undefined to bcrypt
+    const storedHash = user.password_hash || user.password;
+    if (!storedHash) {
+      return res.status(500).json({ error: 'Password hash missing in database record' });
+    }
+
+    const passwordMatches = await bcrypt.compare(password, storedHash);
 
     if (!passwordMatches) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const token = jwt.sign(
-      { id: user.id, role: user.role },
-      process.env.JWT_SECRET,
+      { id: user.id, role: user.role, name: user.name },
+      process.env.JWT_SECRET || 'fallback_secret',
       { expiresIn: '7d' }
     );
 
