@@ -25,9 +25,10 @@ router.get('/', async (req, res) => {
       `SELECT 
          crops.id, 
          crops.farmer_id, 
-         crops.name, crops.name AS crop_name, 
-         crops.price, crops.price AS price_per_kg, 
-         crops.quantity, crops.quantity AS quantity_available, 
+         crops.crop_name, 
+         crops.price_per_kg, 
+         crops.quantity_available, 
+         crops.description,
          users.name AS farmer_name, 
          users.location 
        FROM crops 
@@ -45,15 +46,7 @@ router.get('/', async (req, res) => {
 router.get('/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [crops] = await db.query(
-      `SELECT 
-         id, 
-         farmer_id, 
-         name, name AS crop_name, 
-         price, price AS price_per_kg, 
-         quantity, quantity AS quantity_available 
-       FROM crops 
-       WHERE farmer_id = ? 
-       ORDER BY id DESC`,
+      `SELECT * FROM crops WHERE farmer_id = ? ORDER BY id DESC`,
       [req.params.id]
     );
     res.json(crops);
@@ -71,17 +64,18 @@ router.post('/', verifyToken, async (req, res) => {
     }
 
     // Accepts either naming convention sent by frontend
-    const name = req.body.name || req.body.crop_name;
-    const price = req.body.price || req.body.price_per_kg;
-    const quantity = req.body.quantity || req.body.quantity_available || 0;
+    const crop_name = req.body.name || req.body.crop_name;
+    const price_per_kg = req.body.price || req.body.price_per_kg;
+    const quantity_available = req.body.quantity || req.body.quantity_available || 0;
+    const description = req.body.description || '';
 
-    if (!name || !price) {
+    if (!crop_name || !price_per_kg) {
       return res.status(400).json({ error: 'Crop name and price are required' });
     }
 
     const [result] = await db.query(
-      'INSERT INTO crops (farmer_id, name, price, quantity) VALUES (?, ?, ?, ?)',
-      [req.user.id, name, price, quantity]
+      'INSERT INTO crops (farmer_id, crop_name, price_per_kg, quantity_available, description) VALUES (?, ?, ?, ?, ?)',
+      [req.user.id, crop_name, price_per_kg, quantity_available, description]
     );
 
     res.status(201).json({ message: 'Crop added successfully', cropId: result.insertId });
@@ -94,9 +88,10 @@ router.post('/', verifyToken, async (req, res) => {
 // UPDATE CROP
 router.put('/:id', verifyToken, async (req, res) => {
   try {
-    const name = req.body.name || req.body.crop_name;
-    const price = req.body.price || req.body.price_per_kg;
-    const quantity = req.body.quantity || req.body.quantity_available || 0;
+    const crop_name = req.body.name || req.body.crop_name;
+    const price_per_kg = req.body.price || req.body.price_per_kg;
+    const quantity_available = req.body.quantity || req.body.quantity_available || 0;
+    const description = req.body.description || '';
 
     const [crops] = await db.query('SELECT * FROM crops WHERE id = ?', [req.params.id]);
     if (crops.length === 0) return res.status(404).json({ error: 'Crop not found' });
@@ -106,8 +101,8 @@ router.put('/:id', verifyToken, async (req, res) => {
     }
 
     await db.query(
-      'UPDATE crops SET name = ?, price = ?, quantity = ? WHERE id = ?',
-      [name, price, quantity, req.params.id]
+      'UPDATE crops SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ? WHERE id = ?',
+      [crop_name, price_per_kg, quantity_available, description, req.params.id]
     );
 
     res.json({ message: 'Crop updated successfully' });

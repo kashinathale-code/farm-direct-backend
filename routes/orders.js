@@ -32,29 +32,21 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Crop ID is required' });
     }
 
-    // Fetch farmer_id and price directly from the crops table
-    const [crops] = await db.query('SELECT farmer_id, price FROM crops WHERE id = ?', [crop_id]);
+    // Fetch farmer_id and price directly from the crops table using the correct column name
+    const [crops] = await db.query('SELECT farmer_id, price_per_kg FROM crops WHERE id = ?', [crop_id]);
     if (crops.length === 0) {
       return res.status(404).json({ error: 'Crop not found' });
     }
 
     const farmer_id = crops[0].farmer_id;
-    const price = crops[0].price || 0;
+    const price = crops[0].price_per_kg || 0;
     const total_price = quantity * price;
 
-    // Insert order with fallback for column naming (quantity_ordered vs quantity)
-    let result;
-    try {
-      [result] = await db.query(
-        'INSERT INTO orders (buyer_id, crop_id, farmer_id, quantity_ordered, total_price, status) VALUES (?, ?, ?, ?, ?, "pending")',
-        [req.user.id, crop_id, farmer_id, quantity, total_price]
-      );
-    } catch (err1) {
-      [result] = await db.query(
-        'INSERT INTO orders (buyer_id, crop_id, farmer_id, quantity, total_price, status) VALUES (?, ?, ?, ?, ?, "pending")',
-        [req.user.id, crop_id, farmer_id, quantity, total_price]
-      );
-    }
+    // Insert order matching the schema we defined in init-db.js
+    const [result] = await db.query(
+      'INSERT INTO orders (buyer_id, crop_id, quantity, total_price, status) VALUES (?, ?, ?, ?, "pending")',
+      [req.user.id, crop_id, quantity, total_price]
+    );
 
     res.status(201).json({ message: 'Order placed successfully!', orderId: result.insertId });
   } catch (err) {
@@ -69,7 +61,7 @@ router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS totalOrders,
               SUM(CASE WHEN orders.status = 'pending' THEN 1 ELSE 0 END) AS pendingOrders,
-              COALESCE(SUM(CASE WHEN orders.status = 'delivered' THEN COALESCE(orders.quantity_ordered, orders.quantity, 0) * crops.price ELSE 0 END),0) AS revenue
+              COALESCE(SUM(CASE WHEN orders.status = 'delivered' THEN orders.quantity * crops.price_per_kg ELSE 0 END),0) AS revenue
        FROM orders 
        JOIN crops ON orders.crop_id = crops.id
        WHERE crops.farmer_id = ?`,
@@ -87,9 +79,8 @@ router.get('/buyer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
       `SELECT orders.*, 
-              COALESCE(orders.quantity_ordered, orders.quantity, 0) AS quantity_ordered,
-              crops.name AS crop_name, 
-              crops.price, 
+              crops.crop_name, 
+              crops.price_per_kg AS price, 
               crops.farmer_id, 
               users.name AS farmer_name
        FROM orders 
@@ -111,8 +102,7 @@ router.get('/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [orders] = await db.query(
       `SELECT orders.*, 
-              COALESCE(orders.quantity_ordered, orders.quantity, 0) AS quantity_ordered,
-              crops.name AS crop_name, 
+              crops.crop_name, 
               users.name AS buyer_name, 
               orders.buyer_id
        FROM orders 

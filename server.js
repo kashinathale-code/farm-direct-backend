@@ -21,18 +21,13 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/messages', messageRoutes);
 
 // A simple test route to make sure the server is alive
-app.get('/api/test', (req, res) => {
+app.get('/', (req, res) => {
   res.json({ message: "Welcome to the Farm Direct API!" });
 });
-
-// Import DB initializer
-const createTables = require('./init-db');
 
 // Start the server
 const PORT = process.env.PORT || 5000;
 
-createTables().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-  });
+app.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
 });

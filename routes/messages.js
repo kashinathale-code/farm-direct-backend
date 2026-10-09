@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const router = express.Router();
 
+// Middleware to verify JWT token
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
