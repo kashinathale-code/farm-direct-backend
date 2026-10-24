@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const db = require('../db');
 require('dotenv').config();
 
@@ -49,7 +50,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-// 1. GET ALL CROPS (Marketplace view for buyers)
+// 1. GET ALL CROPS (Marketplace view for buyers - hides private min_bidding_price)
 router.get('/', async (req, res) => {
   try {
     const [crops] = await db.query(
@@ -59,10 +60,13 @@ router.get('/', async (req, res) => {
          crops.crop_name, 
          crops.price_per_kg, 
          crops.quantity_available, 
+         crops.quantity_available AS quantity,
          crops.description,
          crops.category,
          crops.harvest_date,
          crops.image,
+         crops.bidding_enabled,
+         crops.traceability_code,
          users.name AS farmer_name, 
          users.location 
        FROM crops 
@@ -124,6 +128,9 @@ router.post('/', verifyToken, async (req, res) => {
     const raw_category = req.body.category || 'Other';
     const harvest_date = sanitizeHarvestDate(req.body.harvest_date);
     const image = sanitizeCropImage(req.body.image);
+    const bidding_enabled = req.body.bidding_enabled === true || req.body.bidding_enabled === 'true';
+    const min_bidding_price = req.body.min_bidding_price ? parseFloat(req.body.min_bidding_price) : null;
+    const traceability_code = 'FD-' + crypto.randomBytes(4).toString('hex').toUpperCase();
 
     if (!crop_name || !price_per_kg) {
       return res.status(400).json({ error: 'Crop name and price are required' });
@@ -137,12 +144,12 @@ router.post('/', verifyToken, async (req, res) => {
 
     const [result] = await db.query(
       `INSERT INTO crops 
-       (farmer_id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image]
+       (farmer_id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image, bidding_enabled, min_bidding_price, traceability_code) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image, bidding_enabled, min_bidding_price, traceability_code]
     );
 
-    res.status(201).json({ message: 'Crop added successfully', cropId: result.insertId });
+    res.status(201).json({ message: 'Crop added successfully', id: result.insertId, cropId: result.insertId, traceability_code });
   } catch (err) {
     console.error("POST /api/crops Error:", err);
     res.status(500).json({ error: 'Server error while adding crop' });
@@ -186,11 +193,22 @@ router.put('/:id', verifyToken, async (req, res) => {
       image = sanitizeCropImage(req.body.image);
     }
 
+    // Bidding updates
+    let bidding_enabled = crops[0].bidding_enabled;
+    if (req.body.bidding_enabled !== undefined) {
+      bidding_enabled = req.body.bidding_enabled === true || req.body.bidding_enabled === 'true';
+    }
+
+    let min_bidding_price = crops[0].min_bidding_price;
+    if (req.body.min_bidding_price !== undefined) {
+      min_bidding_price = req.body.min_bidding_price ? parseFloat(req.body.min_bidding_price) : null;
+    }
+
     await db.query(
       `UPDATE crops 
-       SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ?, category = ?, harvest_date = ?, image = ? 
+       SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ?, category = ?, harvest_date = ?, image = ?, bidding_enabled = ?, min_bidding_price = ? 
        WHERE id = ?`,
-      [crop_name, price_per_kg, quantity_available, description, category, harvest_date, image, req.params.id]
+      [crop_name, price_per_kg, quantity_available, description, category, harvest_date, image, bidding_enabled, min_bidding_price, req.params.id]
     );
 
     res.json({ message: 'Crop updated successfully' });
