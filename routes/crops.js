@@ -5,6 +5,37 @@ require('dotenv').config();
 
 const router = express.Router();
 
+// Whitelist of valid crop categories
+const ALLOWED_CATEGORIES = ['Vegetables', 'Fruits', 'Grains', 'Pulses', 'Spices', 'Other'];
+
+// Helper to validate and sanitize base64 crop image
+// Must be JPEG format and under 400KB in size
+function sanitizeCropImage(image) {
+  if (!image || typeof image !== 'string') return null;
+  // Check for JPEG base64 data URL header and characters
+  const isJpegBase64 = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image);
+  if (!isJpegBase64) return null;
+  // Ensure size is under 400KB (400 * 1024 bytes)
+  const byteSize = Buffer.byteLength(image, 'utf8');
+  if (byteSize > 400 * 1024) return null;
+  return image;
+}
+
+// Helper to validate category against allowed whitelist
+function validateCategory(category) {
+  if (!category) return 'Other';
+  if (!ALLOWED_CATEGORIES.includes(category)) return null;
+  return category;
+}
+
+// Helper to sanitize harvest date (YYYY-MM-DD or valid date string)
+function sanitizeHarvestDate(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return dateStr;
+}
+
 // Middleware to verify JWT token
 function verifyToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -18,7 +49,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-// GET ALL CROPS (Marketplace view)
+// 1. GET ALL CROPS (Marketplace view for buyers)
 router.get('/', async (req, res) => {
   try {
     const [crops] = await db.query(
@@ -29,6 +60,9 @@ router.get('/', async (req, res) => {
          crops.price_per_kg, 
          crops.quantity_available, 
          crops.description,
+         crops.category,
+         crops.harvest_date,
+         crops.image,
          users.name AS farmer_name, 
          users.location 
        FROM crops 
@@ -42,7 +76,26 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET CROPS BY FARMER ID
+// 2. GET STATS FOR FARMER (Excludes heavy image column for performance)
+router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
+  try {
+    const [[stats]] = await db.query(
+      `SELECT 
+         COUNT(*) AS totalCrops,
+         COALESCE(SUM(quantity_available), 0) AS totalStock,
+         COALESCE(SUM(CASE WHEN quantity_available < 5 THEN 1 ELSE 0 END), 0) AS lowStockCount
+       FROM crops 
+       WHERE farmer_id = ?`,
+      [req.params.id]
+    );
+    res.json(stats || { totalCrops: 0, totalStock: 0, lowStockCount: 0 });
+  } catch (err) {
+    console.error("GET /api/crops/stats/farmer Error:", err);
+    res.status(500).json({ error: 'Server error while fetching crop stats' });
+  }
+});
+
+// 3. GET CROPS BY FARMER ID (For farmer's dashboard listing)
 router.get('/farmer/:id', verifyToken, async (req, res) => {
   try {
     const [crops] = await db.query(
@@ -56,7 +109,7 @@ router.get('/farmer/:id', verifyToken, async (req, res) => {
   }
 });
 
-// POST NEW CROP
+// 4. POST NEW CROP (Includes photo, category, and harvest date)
 router.post('/', verifyToken, async (req, res) => {
   try {
     if (req.user.role !== 'farmer') {
@@ -68,14 +121,25 @@ router.post('/', verifyToken, async (req, res) => {
     const price_per_kg = req.body.price || req.body.price_per_kg;
     const quantity_available = req.body.quantity || req.body.quantity_available || 0;
     const description = req.body.description || '';
+    const raw_category = req.body.category || 'Other';
+    const harvest_date = sanitizeHarvestDate(req.body.harvest_date);
+    const image = sanitizeCropImage(req.body.image);
 
     if (!crop_name || !price_per_kg) {
       return res.status(400).json({ error: 'Crop name and price are required' });
     }
 
+    // Reject unknown categories
+    const category = validateCategory(raw_category);
+    if (!category) {
+      return res.status(400).json({ error: 'Invalid category' });
+    }
+
     const [result] = await db.query(
-      'INSERT INTO crops (farmer_id, crop_name, price_per_kg, quantity_available, description) VALUES (?, ?, ?, ?, ?)',
-      [req.user.id, crop_name, price_per_kg, quantity_available, description]
+      `INSERT INTO crops 
+       (farmer_id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, crop_name, price_per_kg, quantity_available, description, category, harvest_date, image]
     );
 
     res.status(201).json({ message: 'Crop added successfully', cropId: result.insertId });
@@ -85,7 +149,7 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// UPDATE CROP
+// 5. UPDATE CROP (Keeps old image if no new one sent)
 router.put('/:id', verifyToken, async (req, res) => {
   try {
     const crop_name = req.body.name || req.body.crop_name;
@@ -100,9 +164,33 @@ router.put('/:id', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to edit this crop' });
     }
 
+    // Category update: keep existing or validate new
+    let category = crops[0].category || 'Other';
+    if (req.body.category !== undefined) {
+      category = validateCategory(req.body.category);
+      if (!category) {
+        return res.status(400).json({ error: 'Invalid category' });
+      }
+    }
+
+    // Harvest date update: keep existing or sanitize new
+    let harvest_date = crops[0].harvest_date;
+    if (req.body.harvest_date !== undefined) {
+      harvest_date = sanitizeHarvestDate(req.body.harvest_date);
+    }
+
+    // Image update: keep existing if image field is omitted (undefined)
+    let image = crops[0].image;
+    if (req.body.image !== undefined) {
+      // Validate new image (or NULL if invalid / cleared)
+      image = sanitizeCropImage(req.body.image);
+    }
+
     await db.query(
-      'UPDATE crops SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ? WHERE id = ?',
-      [crop_name, price_per_kg, quantity_available, description, req.params.id]
+      `UPDATE crops 
+       SET crop_name = ?, price_per_kg = ?, quantity_available = ?, description = ?, category = ?, harvest_date = ?, image = ? 
+       WHERE id = ?`,
+      [crop_name, price_per_kg, quantity_available, description, category, harvest_date, image, req.params.id]
     );
 
     res.json({ message: 'Crop updated successfully' });
@@ -112,7 +200,7 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE CROP
+// 6. DELETE CROP
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const [crops] = await db.query('SELECT * FROM crops WHERE id = ?', [req.params.id]);

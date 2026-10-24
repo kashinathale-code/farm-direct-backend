@@ -26,6 +26,9 @@ const createTables = async () => {
         quantity_available INT NOT NULL,
         price_per_kg DECIMAL(10, 2) NOT NULL,
         description TEXT,
+        category VARCHAR(50) DEFAULT 'Other',
+        harvest_date DATE NULL,
+        image MEDIUMTEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (farmer_id) REFERENCES users(id) ON DELETE CASCADE
       )

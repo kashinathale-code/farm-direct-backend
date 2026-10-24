@@ -10,9 +10,9 @@ const messageRoutes = require('./routes/messages');
 
 const app = express();
 
-// Middleware to understand JSON and allow frontend requests
+// Middleware to understand JSON (2mb limit for base64 crop images) and allow frontend requests
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 // Set up your API routes
 app.use('/api/auth', authRoutes);
