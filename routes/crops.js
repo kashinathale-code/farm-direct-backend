@@ -80,6 +80,239 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Helper: Calculate SQL-aggregated price benchmark for a given crop
+async function computePriceBenchmark({ cropName, farmerPrice = null, excludeFarmerId = null, excludeCropId = null, region = null }) {
+  const normalized = (cropName || '').trim().toLowerCase();
+  if (!normalized) {
+    return {
+      status: 'invalid_crop',
+      message: 'Crop name is required for benchmark calculation',
+      calculated_at: new Date().toISOString()
+    };
+  }
+
+  let scope = 'platform_wide';
+  let matchedRegion = null;
+  let stats = null;
+
+  // 1. If regional data is available and specified, prefer regional comparison first
+  if (region && typeof region === 'string' && region.trim().length >= 2) {
+    const cleanRegion = region.trim();
+    const [regionalRows] = await db.query(
+      `SELECT 
+         COUNT(*) AS listing_count,
+         ROUND(AVG(crops.price_per_kg), 2) AS avg_price,
+         ROUND(MIN(crops.price_per_kg), 2) AS min_price,
+         ROUND(MAX(crops.price_per_kg), 2) AS max_price
+       FROM crops 
+       JOIN users ON crops.farmer_id = users.id 
+       WHERE LOWER(TRIM(crops.crop_name)) = ?
+         AND crops.quantity_available > 0
+         AND crops.price_per_kg > 0
+         AND (? IS NULL OR crops.farmer_id != ?)
+         AND (? IS NULL OR crops.id != ?)
+         AND (users.location LIKE ? OR ? LIKE CONCAT('%', users.location, '%'))`,
+      [
+        normalized,
+        excludeFarmerId || null, excludeFarmerId || null,
+        excludeCropId || null, excludeCropId || null,
+        `%${cleanRegion}%`, cleanRegion
+      ]
+    );
+
+    if (regionalRows && regionalRows[0] && Number(regionalRows[0].listing_count) >= 2) {
+      stats = regionalRows[0];
+      scope = 'regional';
+      matchedRegion = cleanRegion;
+    }
+  }
+
+  // 2. If regional data is insufficient (< 2 listings) or omitted, fall back to platform-wide comparison
+  if (!stats) {
+    const [platformRows] = await db.query(
+      `SELECT 
+         COUNT(*) AS listing_count,
+         ROUND(AVG(crops.price_per_kg), 2) AS avg_price,
+         ROUND(MIN(crops.price_per_kg), 2) AS min_price,
+         ROUND(MAX(crops.price_per_kg), 2) AS max_price
+       FROM crops 
+       WHERE LOWER(TRIM(crops.crop_name)) = ?
+         AND crops.quantity_available > 0
+         AND crops.price_per_kg > 0
+         AND (? IS NULL OR crops.farmer_id != ?)
+         AND (? IS NULL OR crops.id != ?)`,
+      [
+        normalized,
+        excludeFarmerId || null, excludeFarmerId || null,
+        excludeCropId || null, excludeCropId || null
+      ]
+    );
+    stats = platformRows[0] || { listing_count: 0, avg_price: null, min_price: null, max_price: null };
+    scope = 'platform_wide';
+  }
+
+  const count = Number(stats.listing_count) || 0;
+  const avg = stats.avg_price != null ? Number(stats.avg_price) : null;
+  const min = stats.min_price != null ? Number(stats.min_price) : null;
+  const max = stats.max_price != null ? Number(stats.max_price) : null;
+
+  // If too few comparable listings (less than 2), do not invent a benchmark
+  if (count < 2 || avg === null || avg <= 0) {
+    return {
+      crop_name: cropName,
+      normalized_name: normalized,
+      listing_count: count,
+      comparison_average: null,
+      min_price: min,
+      max_price: max,
+      status: 'insufficient_data',
+      message: 'Not enough comparable listings yet',
+      comparison_scope: scope,
+      region: matchedRegion,
+      calculated_at: new Date().toISOString(),
+      disclaimer: 'Benchmark based on active Farm Direct platform listings. Not an official APMC mandi price or verified national rate.'
+    };
+  }
+
+  // Compute percentage and absolute differences if farmer price is provided
+  let pctDiff = null;
+  let diffPerKg = null;
+  let benchmarkStatus = 'around';
+  let isGoodDeal = false;
+
+  if (farmerPrice != null && !isNaN(Number(farmerPrice)) && Number(farmerPrice) > 0) {
+    const p = Number(farmerPrice);
+    diffPerKg = Number((p - avg).toFixed(2));
+    pctDiff = Number((((p - avg) / avg) * 100).toFixed(2));
+
+    // Clear rule: price at least 5% below average is 'below' and 'is_good_deal'
+    if (pctDiff <= -5.0) {
+      benchmarkStatus = 'below';
+      isGoodDeal = true;
+    } else if (pctDiff >= 5.0) {
+      benchmarkStatus = 'above';
+      isGoodDeal = false;
+    } else {
+      benchmarkStatus = 'around';
+      isGoodDeal = false;
+    }
+  }
+
+  return {
+    crop_name: cropName,
+    normalized_name: normalized,
+    farmer_price: farmerPrice != null ? Number(farmerPrice) : null,
+    comparison_average: avg,
+    min_price: min,
+    max_price: max,
+    listing_count: count,
+    percentage_difference: pctDiff,
+    difference_per_kg: diffPerKg,
+    benchmark_status: benchmarkStatus,
+    is_good_deal: isGoodDeal,
+    comparison_scope: scope,
+    region: matchedRegion,
+    status: 'ok',
+    calculated_at: new Date().toISOString(),
+    disclaimer: 'Benchmark based on active Farm Direct platform listings. Not an official APMC mandi price or verified national rate.'
+  };
+}
+
+// 1b. GET PRICE INSIGHTS (Single crop benchmark or all platform benchmarks)
+router.get('/price-insights', async (req, res) => {
+  try {
+    const { crop_name, farmer_id, crop_id, farmer_price, region, all } = req.query;
+
+    // If 'all=true' or no crop_name provided, return benchmark summary for all active crops
+    if (all === 'true' || !crop_name) {
+      const [rows] = await db.query(
+        `SELECT 
+           LOWER(TRIM(crops.crop_name)) AS normalized_name,
+           MIN(crops.crop_name) AS crop_name,
+           MIN(crops.category) AS category,
+           COUNT(*) AS listing_count,
+           ROUND(AVG(crops.price_per_kg), 2) AS avg_price,
+           ROUND(MIN(crops.price_per_kg), 2) AS min_price,
+           ROUND(MAX(crops.price_per_kg), 2) AS max_price
+         FROM crops 
+         WHERE crops.quantity_available > 0 AND crops.price_per_kg > 0
+         GROUP BY LOWER(TRIM(crops.crop_name))
+         ORDER BY listing_count DESC, normalized_name ASC`
+      );
+
+      const benchmarks = rows.map(r => {
+        const count = Number(r.listing_count);
+        const avg = r.avg_price != null ? Number(r.avg_price) : null;
+        return {
+          crop_name: r.crop_name,
+          normalized_name: r.normalized_name,
+          category: r.category || 'Other',
+          listing_count: count,
+          comparison_average: count >= 2 ? avg : null,
+          min_price: count >= 2 ? Number(r.min_price) : null,
+          max_price: count >= 2 ? Number(r.max_price) : null,
+          status: count >= 2 ? 'ok' : 'insufficient_data',
+          message: count >= 2 ? 'Benchmark calculated' : 'Not enough comparable listings yet'
+        };
+      });
+
+      return res.json({
+        total_crops: benchmarks.length,
+        calculated_at: new Date().toISOString(),
+        disclaimer: 'Benchmark based on active Farm Direct platform listings. Not an official APMC mandi price or verified national rate.',
+        benchmarks
+      });
+    }
+
+    const benchmark = await computePriceBenchmark({
+      cropName: crop_name,
+      farmerPrice: farmer_price ? parseFloat(farmer_price) : null,
+      excludeFarmerId: farmer_id ? parseInt(farmer_id, 10) : null,
+      excludeCropId: crop_id ? parseInt(crop_id, 10) : null,
+      region: region || null
+    });
+
+    res.json(benchmark);
+  } catch (err) {
+    console.error("GET /api/crops/price-insights Error:", err);
+    res.status(500).json({ error: 'Server error while calculating price insights' });
+  }
+});
+
+// 1c. GET BENCHMARK FOR SPECIFIC CROP LISTING (Auto-excludes current listing & farmer)
+router.get('/:id/price-benchmark', async (req, res) => {
+  try {
+    const cropId = parseInt(req.params.id, 10);
+    if (isNaN(cropId)) return res.status(400).json({ error: 'Invalid crop ID' });
+
+    const [crops] = await db.query(
+      `SELECT crops.*, users.location 
+       FROM crops 
+       JOIN users ON crops.farmer_id = users.id 
+       WHERE crops.id = ?`,
+      [cropId]
+    );
+
+    if (crops.length === 0) {
+      return res.status(404).json({ error: 'Crop listing not found' });
+    }
+
+    const crop = crops[0];
+    const benchmark = await computePriceBenchmark({
+      cropName: crop.crop_name,
+      farmerPrice: crop.price_per_kg,
+      excludeFarmerId: crop.farmer_id,
+      excludeCropId: crop.id,
+      region: crop.location || null
+    });
+
+    res.json(benchmark);
+  } catch (err) {
+    console.error("GET /api/crops/:id/price-benchmark Error:", err);
+    res.status(500).json({ error: 'Server error while calculating crop price benchmark' });
+  }
+});
+
 // 2. GET STATS FOR FARMER (Excludes heavy image column for performance)
 router.get('/stats/farmer/:id', verifyToken, async (req, res) => {
   try {

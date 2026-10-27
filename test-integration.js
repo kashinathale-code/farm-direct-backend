@@ -286,6 +286,29 @@ async function runTests() {
     assert(aiChat.status === 200 && aiChat.body.reply, 'AI Assistant responds successfully');
     assert(aiChat.body.reply.toLowerCase().includes('mango') || aiChat.body.reply.includes('₹'), 'AI Assistant dynamically referenced actual database produce in its response');
 
+    // TEST 9: Fair Price Benchmarking & User Profile Location
+    console.log('\n[9/9] Fair Price Benchmarking & User Profile Updates');
+    // Fetch all benchmarks summary
+    const allInsights = await request('GET', '/crops/price-insights?all=true');
+    assert(allInsights.status === 200 && Array.isArray(allInsights.body.benchmarks), 'GET /crops/price-insights?all=true returns platform benchmark summary');
+
+    // Fetch benchmark for single crop
+    const singleInsight = await request('GET', `/crops/price-insights?crop_name=Wheat&farmer_price=24`);
+    assert(singleInsight.status === 200 && singleInsight.body.crop_name === 'Wheat', 'GET /crops/price-insights returns benchmark for specific crop');
+
+    // Test specific crop listing benchmark endpoint
+    if (testCropId) {
+      const cropBenchmark = await request('GET', `/crops/${testCropId}/price-benchmark`);
+      assert(cropBenchmark.status === 200 && (cropBenchmark.body.status === 'ok' || cropBenchmark.body.status === 'insufficient_data'), 'GET /crops/:id/price-benchmark successfully processes listing benchmark');
+    }
+
+    // Profile location update test
+    const profileRes = await request('GET', '/auth/profile', null, farmerToken);
+    assert(profileRes.status === 200 && profileRes.body.email === farmerUser.email, 'GET /auth/profile returns authenticated user profile');
+
+    const updateProfileRes = await request('PUT', '/auth/profile', { location: 'Nashik, Maharashtra' }, farmerToken);
+    assert(updateProfileRes.status === 200 && updateProfileRes.body.user.location === 'Nashik, Maharashtra', 'PUT /auth/profile successfully updates user location preference');
+
     console.log('\n======================================================');
     console.log(`🎉 ALL ${passedTests}/${totalTests} TESTS PASSED SUCCESSFULLY!`);
     console.log('======================================================\n');
