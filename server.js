@@ -13,6 +13,16 @@ const groupBuyRoutes = require('./routes/groupBuys');
 const traceabilityRoutes = require('./routes/traceability');
 const assistantRoutes = require('./routes/assistant');
 
+// New feature route modules
+const marketPriceRoutes = require('./routes/marketPrices');
+const profileRoutes = require('./routes/profile');
+const wishlistRoutes = require('./routes/wishlist');
+const { router: priceAlertRoutes } = require('./routes/priceAlerts');
+const reviewRoutes = require('./routes/reviews');
+const harvestCalendarRoutes = require('./routes/harvestCalendar');
+const profitCalculatorRoutes = require('./routes/profitCalculator');
+const demandAnalyticsRoutes = require('./routes/demandAnalytics');
+
 const app = express();
 
 // Security headers and CORS configuration
@@ -45,6 +55,16 @@ app.use('/api/group-buys', groupBuyRoutes);
 app.use('/api/traceability', traceabilityRoutes);
 app.use('/api/assistant', assistantRoutes);
 
+// Mount new feature routes
+app.use('/api/market-prices', marketPriceRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/price-alerts', priceAlertRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/harvest-calendar', harvestCalendarRoutes);
+app.use('/api/profit-calculator', profitCalculatorRoutes);
+app.use('/api/analytics', demandAnalyticsRoutes);
+
 // Health check and root route
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -53,8 +73,12 @@ app.get('/api/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({ 
     message: "Welcome to the Farm Direct API!",
-    version: "2.0.0",
-    features: ["crops", "orders", "bids", "group-buys", "traceability", "notifications", "assistant"]
+    version: "3.0.0",
+    features: [
+      "crops", "orders", "bids", "group-buys", "traceability", "notifications",
+      "assistant", "market-prices", "profile", "wishlist", "price-alerts",
+      "reviews", "harvest-calendar", "profit-calculator", "demand-analytics"
+    ]
   });
 });
 
