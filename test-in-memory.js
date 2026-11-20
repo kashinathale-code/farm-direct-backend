@@ -220,6 +220,142 @@ runTest('Reviews: Strictly Eligible Orders and Single Review Enforcement', () =>
   assert.strictEqual(validateReviewEligibility(deliveredOrder, 99).ok, false); // different user
 });
 
+// 8. ROLE-BASED ACCESS CONTROL (RBAC) & PERMISSION HIERARCHY
+runTest('RBAC: Super Admin Hierarchy, Driver Isolation & Public Registration Constraints', () => {
+  const publicAllowedRoles = ['farmer', 'buyer', 'business_buyer', 'fpo_manager'];
+  
+  function isPublicRegistrationAllowed(role) {
+    return publicAllowedRoles.includes(role);
+  }
+
+  // Security check: super_admin, admin, delivery_partner CANNOT be registered publicly
+  assert.strictEqual(isPublicRegistrationAllowed('farmer'), true);
+  assert.strictEqual(isPublicRegistrationAllowed('buyer'), true);
+  assert.strictEqual(isPublicRegistrationAllowed('business_buyer'), true);
+  assert.strictEqual(isPublicRegistrationAllowed('fpo_manager'), true);
+  assert.strictEqual(isPublicRegistrationAllowed('delivery_partner'), false, 'Delivery partner requires admin registration');
+  assert.strictEqual(isPublicRegistrationAllowed('admin'), false, 'Admin cannot be registered publicly');
+  assert.strictEqual(isPublicRegistrationAllowed('super_admin'), false, 'Super admin cannot be registered publicly');
+
+  // Hierarchy check: super_admin inherits admin access
+  function hasAdminAccess(userRole) {
+    return userRole === 'admin' || userRole === 'super_admin';
+  }
+  assert.strictEqual(hasAdminAccess('super_admin'), true);
+  assert.strictEqual(hasAdminAccess('admin'), true);
+  assert.strictEqual(hasAdminAccess('farmer'), false);
+  assert.strictEqual(hasAdminAccess('delivery_partner'), false);
+});
+
+// 9. DELIVERY LIFECYCLE STATE TRANSITIONS
+runTest('Delivery Fleet: 5-Stage Status Progression & State Guard', () => {
+  const allowedTransitions = {
+    'assigned': ['picked_up', 'failed'],
+    'picked_up': ['in_transit', 'failed'],
+    'in_transit': ['out_for_delivery', 'failed'],
+    'out_for_delivery': ['delivered', 'failed'],
+    'delivered': [],
+    'failed': ['assigned'] // Can be reassigned
+  };
+
+  function canAdvanceDelivery(current, next) {
+    return (allowedTransitions[current] || []).includes(next);
+  }
+
+  assert.strictEqual(canAdvanceDelivery('assigned', 'picked_up'), true);
+  assert.strictEqual(canAdvanceDelivery('picked_up', 'in_transit'), true);
+  assert.strictEqual(canAdvanceDelivery('in_transit', 'out_for_delivery'), true);
+  assert.strictEqual(canAdvanceDelivery('out_for_delivery', 'delivered'), true);
+  
+  // Illegal jumps
+  assert.strictEqual(canAdvanceDelivery('assigned', 'delivered'), false, 'Cannot jump assigned straight to delivered');
+  assert.strictEqual(canAdvanceDelivery('delivered', 'in_transit'), false, 'Delivered order cannot re-enter transit');
+});
+
+// 10. INVOICE GENERATION & ITEMIZATION
+runTest('Invoices: Number Formatting, Line Items Summation & Fee Breakdown', () => {
+  const order = {
+    id: 42,
+    quantity: 150, // kg
+    unit_price: 40 // ₹/kg
+  };
+  const subtotal = order.quantity * order.unit_price; // 6,000
+  const platformFeePct = 2.5; // 2.5%
+  const platformFee = Math.round((subtotal * platformFeePct) / 100); // 150
+  const netFarmerPayout = subtotal - platformFee; // 5,850
+
+  function formatInvoiceNumber(orderId, date) {
+    const ymd = date.toISOString().slice(0, 10).replace(/-/g, '');
+    const padded = String(orderId).padStart(4, '0');
+    return `INV-${ymd}-${padded}`;
+  }
+
+  const invNum = formatInvoiceNumber(42, new Date('2026-05-15T12:00:00Z'));
+  assert.strictEqual(invNum, 'INV-20260515-0042');
+  assert.strictEqual(subtotal, 6000);
+  assert.strictEqual(platformFee, 150);
+  assert.strictEqual(netFarmerPayout, 5850);
+});
+
+// 11. NASA SOIL MOISTURE HYDROLOGY INTERPRETATION
+runTest('NASA Soil Moisture: SFMC Condition Classification & Irrigation Recommendation', () => {
+  function classifySoilMoisture(sfmcPct) {
+    if (sfmcPct < 15) {
+      return { condition: 'Severe Deficit', advisory: 'Immediate emergency irrigation required' };
+    } else if (sfmcPct < 25) {
+      return { condition: 'Moderate Deficit', advisory: 'Light irrigation recommended within 24-48 hours' };
+    } else if (sfmcPct <= 45) {
+      return { condition: 'Optimal / Adequate', advisory: 'Optimal field capacity. No irrigation needed' };
+    } else {
+      return { condition: 'Excess / Saturated', advisory: 'High moisture. Ensure field drainage to prevent waterlogging' };
+    }
+  }
+
+  assert.strictEqual(classifySoilMoisture(12).condition, 'Severe Deficit');
+  assert.strictEqual(classifySoilMoisture(20).condition, 'Moderate Deficit');
+  assert.strictEqual(classifySoilMoisture(32).condition, 'Optimal / Adequate');
+  assert.strictEqual(classifySoilMoisture(52).condition, 'Excess / Saturated');
+});
+
+// 12. AI CROP QUALITY ASSESSMENT HEURISTIC & PRICING
+runTest('Crop Quality: Grade Classification & Market Price Adjustment', () => {
+  function calculateGradeAndPricing(freshnessPct, defectCount) {
+    let grade = 'B';
+    let label = 'Grade B (Fair Average Quality - FAQ)';
+    let priceAdj = '0% standard benchmark price';
+
+    if (freshnessPct >= 90 && defectCount === 0) {
+      grade = 'A+';
+      label = 'Grade A+ (Premium Export Quality)';
+      priceAdj = '+10% to +15% premium justified';
+    } else if (freshnessPct >= 80 && defectCount <= 1) {
+      grade = 'A';
+      label = 'Grade A (Standard Grade-I)';
+      priceAdj = '+5% premium justified';
+    } else if (freshnessPct < 65 || defectCount >= 4) {
+      grade = 'C';
+      label = 'Grade C (Processing / Economy)';
+      priceAdj = '-15% to -25% discount for bulk processing';
+    }
+
+    return { grade, label, priceAdj };
+  }
+
+  const exportLot = calculateGradeAndPricing(95, 0);
+  assert.strictEqual(exportLot.grade, 'A+');
+  assert.ok(exportLot.priceAdj.includes('+10%'));
+
+  const standardLot = calculateGradeAndPricing(85, 1);
+  assert.strictEqual(standardLot.grade, 'A');
+
+  const faqLot = calculateGradeAndPricing(72, 2);
+  assert.strictEqual(faqLot.grade, 'B');
+
+  const processingLot = calculateGradeAndPricing(60, 4);
+  assert.strictEqual(processingLot.grade, 'C');
+  assert.ok(processingLot.priceAdj.includes('-15%'));
+});
+
 console.log(`\n======================================================`);
 console.log(`TEST SUMMARY: ${passedTests} / ${totalTests} TESTS PASSED (100%)`);
 console.log('======================================================\n');

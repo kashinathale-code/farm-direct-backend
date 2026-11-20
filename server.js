@@ -23,6 +23,16 @@ const harvestCalendarRoutes = require('./routes/harvestCalendar');
 const profitCalculatorRoutes = require('./routes/profitCalculator');
 const demandAnalyticsRoutes = require('./routes/demandAnalytics');
 
+// Advanced Platform Upgrade Modules
+const adminRoutes = require('./routes/admin');
+const deliveryRoutes = require('./routes/delivery');
+const cropQualityRoutes = require('./routes/cropQuality');
+const soilHealthRoutes = require('./routes/soilHealth');
+const farmServicesRoutes = require('./routes/farmServices');
+const certificateRoutes = require('./routes/certificates');
+const invoiceRoutes = require('./routes/invoices');
+const complaintRoutes = require('./routes/complaints');
+
 const app = express();
 
 // Security headers and CORS configuration
@@ -64,6 +74,16 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/harvest-calendar', harvestCalendarRoutes);
 app.use('/api/profit-calculator', profitCalculatorRoutes);
 app.use('/api/analytics', demandAnalyticsRoutes);
+
+// Mount Advanced Upgrade routes
+app.use('/api/admin', adminRoutes);
+app.use('/api/delivery', deliveryRoutes);
+app.use('/api/crop-quality', cropQualityRoutes);
+app.use('/api/soil-health', soilHealthRoutes);
+app.use('/api/farm-services', farmServicesRoutes);
+app.use('/api/certificates', certificateRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/complaints', complaintRoutes);
 
 // Health check and root route
 app.get('/api/health', (req, res) => {

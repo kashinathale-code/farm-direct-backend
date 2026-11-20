@@ -2,17 +2,28 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { recordAuditLog } = require('../middleware/auth');
 require('dotenv').config();
 
 const router = express.Router();
 
-// --- REGISTRATION ROUTE ---
+// --- REGISTRATION ROUTE (Public) ---
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role, location } = req.body;
+    const { name, email, password, role, location, phone, business_name, gstin, fpo_registration_number } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Security: Only allow public registration for standard end-user roles
+    const ALLOWED_PUBLIC_ROLES = ['farmer', 'buyer', 'business_buyer', 'fpo_manager'];
+    const requestedRole = (role || '').toLowerCase().trim();
+
+    if (!ALLOWED_PUBLIC_ROLES.includes(requestedRole)) {
+      return res.status(403).json({ 
+        error: `Public registration is restricted. Role '${role}' requires administrative invitation or creation.` 
+      });
     }
 
     // 1. Check if user already exists
@@ -26,11 +37,26 @@ router.post('/register', async (req, res) => {
 
     // 3. Insert into TiDB MySQL database
     const [result] = await db.query(
-      'INSERT INTO users (name, email, password, role, location) VALUES (?, ?, ?, ?, ?)',
-      [name, email, hashedPassword, role, location || '']
+      `INSERT INTO users (name, email, password, role, status, location, phone, business_name, gstin, fpo_registration_number) 
+       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+      [
+        name.trim(), 
+        email.trim().toLowerCase(), 
+        hashedPassword, 
+        requestedRole, 
+        location || '',
+        phone || null,
+        business_name || null,
+        gstin || null,
+        fpo_registration_number || null
+      ]
     );
 
-    res.status(201).json({ message: 'User registered successfully', userId: result.insertId });
+    res.status(201).json({ 
+      message: 'User registered successfully', 
+      userId: result.insertId,
+      role: requestedRole 
+    });
   } catch (err) {
     console.error("Registration Error:", err.message);
     res.status(500).json({ error: 'Server error: ' + err.message });
@@ -54,7 +80,12 @@ router.post('/login', async (req, res) => {
 
     const user = users[0];
 
-    // 2. Verify Password hash
+    // 2. Check account status
+    if (user.status === 'suspended') {
+      return res.status(403).json({ error: 'This account has been suspended. Please contact administrator support.' });
+    }
+
+    // 3. Verify Password hash
     const storedHash = user.password || user.password_hash;
     if (!storedHash) {
       return res.status(500).json({ error: 'Password missing in database record' });
@@ -63,20 +94,37 @@ router.post('/login', async (req, res) => {
     const passwordMatches = await bcrypt.compare(password, storedHash);
 
     if (!passwordMatches) {
+      if (['admin', 'super_admin'].includes(user.role)) {
+        await recordAuditLog(user.id, user.role, 'ADMIN_LOGIN_FAILED', 'users', user.id, { email }, req);
+      }
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // 3. Generate JWT
+    // 4. Generate JWT
     const token = jwt.sign(
       { id: user.id, role: user.role, name: user.name },
       process.env.JWT_SECRET || 'fallback_secret',
       { expiresIn: '7d' }
     );
 
+    // Record admin logins in audit_logs
+    if (['admin', 'super_admin'].includes(user.role)) {
+      await recordAuditLog(user.id, user.role, 'ADMIN_LOGIN_SUCCESS', 'users', user.id, { email }, req);
+    }
+
     res.json({
       message: 'Login successful',
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, location: user.location }
+      user: { 
+        id: user.id, 
+        name: user.name, 
+        email: user.email, 
+        role: user.role, 
+        status: user.status || 'active',
+        location: user.location,
+        district: user.district,
+        phone: user.phone
+      }
     });
   } catch (err) {
     console.error("Login Error:", err.message);
